@@ -1,0 +1,366 @@
+import React, { useState } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Calendar, Wrench, DollarSign, Users, Mail, CheckCircle, Edit, X, Plus, Archive } from 'lucide-react';
+
+const TenantManagementSystem = () => {
+  const [tenants, setTenants] = useState([
+    {
+      id: 1,
+      name: 'John Doe',
+      email: 'john.doe@email.com',
+      room: '101',
+      rentDue: 1000,
+      lastPayment: '2025-01-01',
+      maintenance: [{
+        issue: 'Broken heater',
+        status: 'pending',
+        reported: '2025-01-05'
+      }],
+      contact: '123-456-7890',
+      leaseEnd: '2025-05-31',
+      leaseStart: '2024-09-01',
+      emergencyContact: 'Jane Doe',
+      emergencyPhone: '123-456-7899',
+      status: 'current'
+    }
+  ]);
+
+  const [editingTenant, setEditingTenant] = useState(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showNewTenantModal, setShowNewTenantModal] = useState(false);
+
+  const newTenantTemplate = {
+    id: Date.now(),
+    name: '',
+    email: '',
+    room: '',
+    rentDue: 0,
+    lastPayment: '',
+    maintenance: [],
+    contact: '',
+    leaseEnd: '',
+    leaseStart: '',
+    emergencyContact: '',
+    emergencyPhone: '',
+    status: 'current'
+  };
+
+  const handleNewTenant = () => {
+    setEditingTenant({...newTenantTemplate});
+    setShowNewTenantModal(true);
+  };
+
+  const handleSaveNewTenant = () => {
+    setTenants([...tenants, editingTenant]);
+    setShowNewTenantModal(false);
+    setEditingTenant(null);
+  };
+
+  const handleArchiveTenant = (tenantId) => {
+    setTenants(tenants.map(t => 
+      t.id === tenantId ? {...t, status: 'previous'} : t
+    ));
+  };
+
+  const currentTenants = tenants.filter(t => t.status === 'current');
+  const previousTenants = tenants.filter(t => t.status === 'previous');
+
+  const getDashboardStats = () => ({
+    totalTenants: currentTenants.length,
+    pendingMaintenance: currentTenants.reduce((acc, tenant) => 
+      acc + tenant.maintenance.filter(m => m.status === 'pending').length, 0),
+    upcomingLeaseEnds: currentTenants.filter(t => {
+      const daysUntilLeaseEnd = Math.ceil(
+        (new Date(t.leaseEnd) - new Date()) / (1000 * 60 * 60 * 24)
+      );
+      return daysUntilLeaseEnd <= 30;
+    }).length,
+    totalRentDue: currentTenants.reduce((acc, tenant) => acc + tenant.rentDue, 0)
+  });
+
+  const TenantForm = ({ onSave, onCancel, title }) => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-screen overflow-y-auto">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-bold">{title}</h2>
+          <button onClick={onCancel} className="text-gray-500 hover:text-gray-700">
+            <X className="h-6 w-6" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">Name</label>
+            <input
+              type="text"
+              value={editingTenant?.name || ''}
+              onChange={(e) => setEditingTenant({...editingTenant, name: e.target.value})}
+              className="w-full p-2 border rounded"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Email</label>
+            <input
+              type="email"
+              value={editingTenant?.email || ''}
+              onChange={(e) => setEditingTenant({...editingTenant, email: e.target.value})}
+              className="w-full p-2 border rounded"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Room Number</label>
+            <input
+              type="text"
+              value={editingTenant?.room || ''}
+              onChange={(e) => setEditingTenant({...editingTenant, room: e.target.value})}
+              className="w-full p-2 border rounded"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Contact Phone</label>
+            <input
+              type="tel"
+              value={editingTenant?.contact || ''}
+              onChange={(e) => setEditingTenant({...editingTenant, contact: e.target.value})}
+              className="w-full p-2 border rounded"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Rent Amount</label>
+            <input
+              type="number"
+              value={editingTenant?.rentDue || 0}
+              onChange={(e) => setEditingTenant({...editingTenant, rentDue: parseFloat(e.target.value)})}
+              className="w-full p-2 border rounded"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Last Payment Date</label>
+            <input
+              type="date"
+              value={editingTenant?.lastPayment || ''}
+              onChange={(e) => setEditingTenant({...editingTenant, lastPayment: e.target.value})}
+              className="w-full p-2 border rounded"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Lease Start Date</label>
+            <input
+              type="date"
+              value={editingTenant?.leaseStart || ''}
+              onChange={(e) => setEditingTenant({...editingTenant, leaseStart: e.target.value})}
+              className="w-full p-2 border rounded"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Lease End Date</label>
+            <input
+              type="date"
+              value={editingTenant?.leaseEnd || ''}
+              onChange={(e) => setEditingTenant({...editingTenant, leaseEnd: e.target.value})}
+              className="w-full p-2 border rounded"
+            />
+          </div>
+        </div>
+
+        <div className="mt-6 flex justify-end space-x-4">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 border rounded text-gray-600 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onSave}
+            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="p-6 max-w-6xl mx-auto">
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-3xl font-bold">Student Housing Management</h1>
+        <button
+          onClick={handleNewTenant}
+          className="px-4 py-2 bg-green-500 text-white rounded flex items-center gap-2 hover:bg-green-600"
+        >
+          <Plus className="h-5 w-5" />
+          Add New Tenant
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center space-x-4">
+              <Users className="h-8 w-8 text-blue-500" />
+              <div>
+                <p className="text-sm text-gray-500">Current Tenants</p>
+                <p className="text-2xl font-bold">{getDashboardStats().totalTenants}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center space-x-4">
+              <Wrench className="h-8 w-8 text-yellow-500" />
+              <div>
+                <p className="text-sm text-gray-500">Pending Maintenance</p>
+                <p className="text-2xl font-bold">{getDashboardStats().pendingMaintenance}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center space-x-4">
+              <Calendar className="h-8 w-8 text-red-500" />
+              <div>
+                <p className="text-sm text-gray-500">Upcoming Lease Ends</p>
+                <p className="text-2xl font-bold">{getDashboardStats().upcomingLeaseEnds}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center space-x-4">
+              <DollarSign className="h-8 w-8 text-green-500" />
+              <div>
+                <p className="text-sm text-gray-500">Total Rent Due</p>
+                <p className="text-2xl font-bold">${getDashboardStats().totalRentDue}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="mb-8">
+        <CardHeader>
+          <CardTitle>Current Tenants</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="divide-y">
+            {currentTenants.map(tenant => (
+              <div key={tenant.id} className="py-4">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold">{tenant.name}</h3>
+                      <button 
+                        onClick={() => {
+                          setEditingTenant({...tenant});
+                          setShowEditModal(true);
+                        }}
+                        className="p-1 text-gray-500 hover:text-blue-500"
+                      >
+                        <Edit className="h-4 w-4" />
+                      </button>
+                      <button 
+                        onClick={() => handleArchiveTenant(tenant.id)}
+                        className="p-1 text-gray-500 hover:text-red-500"
+                      >
+                        <Archive className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <p className="text-sm text-gray-500">Room {tenant.room}</p>
+                    <p className="text-sm text-gray-500">Contact: {tenant.contact}</p>
+                    <p className="text-sm text-gray-500">Email: {tenant.email}</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold">Rent Due: ${tenant.rentDue}</p>
+                    <p className="text-sm text-gray-500">Last Payment: {tenant.lastPayment}</p>
+                    <p className="text-sm text-gray-500">Lease: {tenant.leaseStart} to {tenant.leaseEnd}</p>
+                  </div>
+                </div>
+                
+                {tenant.maintenance.length > 0 && (
+                  <Alert className="mt-2">
+                    <AlertDescription>
+                      Maintenance Request: {tenant.maintenance[0].issue}
+                      <span className="ml-2 text-yellow-600">({tenant.maintenance[0].status})</span>
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {previousTenants.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Previous Tenants</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="divide-y">
+              {previousTenants.map(tenant => (
+                <div key={tenant.id} className="py-4">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h3 className="font-semibold">{tenant.name}</h3>
+                      <p className="text-sm text-gray-500">Previous Room: {tenant.room}</p>
+                      <p className="text-sm text-gray-500">Contact: {tenant.contact}</p>
+                      <p className="text-sm text-gray-500">Email: {tenant.email}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Previous Lease: {tenant.leaseStart} to {tenant.leaseEnd}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {showEditModal && (
+        <TenantForm
+          title="Edit Tenant Information"
+          onSave={() => {
+            setTenants(tenants.map(t => 
+              t.id === editingTenant.id ? editingTenant : t
+            ));
+            setShowEditModal(false);
+            setEditingTenant(null);
+          }}
+          onCancel={() => {
+            setShowEditModal(false);
+            setEditingTenant(null);
+          }}
+        />
+      )}
+
+      {showNewTenantModal && (
+        <TenantForm
+          title="Add New Tenant"
+          onSave={handleSaveNewTenant}
+          onCancel={() => {
+            setShowNewTenantModal(false);
+            setEditingTenant(null);
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+export default TenantManagementSystem;
