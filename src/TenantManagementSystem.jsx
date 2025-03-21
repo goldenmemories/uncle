@@ -5,7 +5,8 @@ import {
   Calendar, Wrench, DollarSign, Users, Mail, 
   Edit, X, Plus, Archive, Menu, ChevronDown, ChevronUp 
 } from 'lucide-react';
-import { supabase } from './lib/supabaseClient';
+import { testConnection } from './lib/supabaseClient';
+import { tenantService, maintenanceService, getDashboardData } from './services/databaseService';
 import TenantForm from './components/TenantForm';
 import EmailModal from './components/EmailModal';
 import TenantCard from './components/TenantCard';
@@ -27,6 +28,12 @@ const TenantManagementSystem = () => {
   const [showMenu, setShowMenu] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [dashboardStats, setDashboardStats] = useState({
+    totalTenants: 0,
+    pendingMaintenance: 0,
+    upcomingLeaseEnds: 0,
+    totalRentDue: 0
+  });
 
   const newTenantTemplate = {
     name: '',
@@ -62,31 +69,47 @@ const TenantManagementSystem = () => {
     }
   };
 
-  // Initial data fetch
+  // Initial data fetch and connection test
   useEffect(() => {
-    fetchTenants();
+    const initApp = async () => {
+      try {
+        // Test database connection first
+        const connectionTest = await testConnection();
+        if (!connectionTest.success) {
+          throw new Error(`Database connection failed: ${connectionTest.message}`);
+        }
+        
+        // Fetch data
+        await fetchData();
+      } catch (err) {
+        console.error('Initialization error:', err);
+        setError(`System initialization error: ${err.message}. Please refresh the page or contact support.`);
+        setLoading(false);
+      }
+    };
+    
+    initApp();
   }, []);
 
-  // Fetch tenants and their maintenance requests
-  const fetchTenants = async () => {
+  // Fetch all necessary data
+  const fetchData = async () => {
     try {
       setLoading(true);
       setError(null);
       
-      // Get tenants
-      const { data: tenantsData, error: tenantsError } = await supabase
-        .from('tenants')
-        .select('*')
-        .order('name');
-        
-      if (tenantsError) throw tenantsError;
+      // Fetch tenants with proper error handling
+      const { data: tenantsData, error: tenantsError } = await tenantService.getAllTenants();
       
-      // Get maintenance requests
-      const { data: maintenanceData, error: maintenanceError } = await supabase
-        .from('maintenance_requests')
-        .select('*');
-        
-      if (maintenanceError) throw maintenanceError;
+      if (tenantsError) {
+        throw new Error(`Error fetching tenants: ${tenantsError}`);
+      }
+      
+      // Fetch maintenance requests
+      const { data: maintenanceData, error: maintenanceError } = await maintenanceService.getAllMaintenanceRequests();
+      
+      if (maintenanceError) {
+        throw new Error(`Error fetching maintenance requests: ${maintenanceError}`);
+      }
       
       // Join tenants with their maintenance requests
       const tenantsWithMaintenance = tenantsData.map(tenant => {
@@ -101,12 +124,50 @@ const TenantManagementSystem = () => {
       });
       
       setTenants(tenantsWithMaintenance);
+      
+      // Fetch dashboard data
+      const { data: dashboardData, error: dashboardError } = await getDashboardData();
+      
+      if (dashboardError) {
+        console.warn(`Dashboard data error: ${dashboardError}`);
+        // Don't throw error here, we'll just use calculated data instead
+      } else if (dashboardData) {
+        setDashboardStats(dashboardData);
+      } else {
+        // Calculate dashboard data from tenants if the service call failed
+        updateDashboardStats(tenantsWithMaintenance);
+      }
+      
+      console.log('Data loaded successfully:', tenantsWithMaintenance.length, 'tenants');
     } catch (error) {
       console.error('Error fetching data:', error.message);
-      setError('Failed to load data. Please try again.');
+      setError(`Failed to load data: ${error.message}`);
     } finally {
       setLoading(false);
     }
+  };
+
+  // Calculate dashboard stats from tenant data
+  const updateDashboardStats = (tenantData) => {
+    const currentTenants = tenantData.filter(tenant => tenant.status === 'current');
+    
+    const stats = {
+      totalTenants: currentTenants.length,
+      pendingMaintenance: currentTenants.reduce(
+        (acc, tenant) => acc + tenant.maintenance.filter(m => m.status === 'pending').length, 0
+      ),
+      upcomingLeaseEnds: currentTenants.filter(tenant => {
+        if (!tenant.lease_end) return false;
+        
+        const daysUntilLeaseEnd = Math.ceil(
+          (new Date(tenant.lease_end) - new Date()) / (1000 * 60 * 60 * 24)
+        );
+        return daysUntilLeaseEnd <= 30 && daysUntilLeaseEnd > 0;
+      }).length,
+      totalRentDue: currentTenants.reduce((acc, tenant) => acc + (tenant.rent_due || 0), 0)
+    };
+    
+    setDashboardStats(stats);
   };
 
   const handleNewTenant = () => {
@@ -116,49 +177,73 @@ const TenantManagementSystem = () => {
   };
 
   const handleSaveNewTenant = async () => {
+    // Validate required fields
+    if (!editingTenant.name || !editingTenant.email || !editingTenant.room) {
+      setError('Please fill out all required fields (Name, Email, Room)');
+      return;
+    }
+    
     try {
+      setLoading(true);
       setError(null);
       
-      // Insert the new tenant into Supabase
-      const { data, error } = await supabase
-        .from('tenants')
-        .insert([{
-          name: editingTenant.name,
-          email: editingTenant.email,
-          room: editingTenant.room,
-          rent_due: editingTenant.rent_due,
-          last_payment: editingTenant.last_payment,
-          contact: editingTenant.contact,
-          lease_end: editingTenant.lease_end,
-          lease_start: editingTenant.lease_start,
-          emergency_contact: editingTenant.emergency_contact,
-          emergency_phone: editingTenant.emergency_phone,
-          status: 'current'
-        }])
-        .select();
-        
-      if (error) throw error;
+      // Use the service to create the tenant
+      const { data: newTenant, error: createError } = await tenantService.createTenant({
+        name: editingTenant.name,
+        email: editingTenant.email,
+        room: editingTenant.room,
+        rent_due: editingTenant.rent_due,
+        last_payment: editingTenant.last_payment,
+        contact: editingTenant.contact,
+        lease_end: editingTenant.lease_end,
+        lease_start: editingTenant.lease_start,
+        emergency_contact: editingTenant.emergency_contact,
+        emergency_phone: editingTenant.emergency_phone,
+        status: 'current'
+      });
+      
+      if (createError) {
+        throw new Error(createError);
+      }
+      
+      if (!newTenant) {
+        throw new Error('No data returned after creating tenant');
+      }
       
       // Add the new tenant to state with an empty maintenance array
-      const newTenant = { ...data[0], maintenance: [] };
-      setTenants([...tenants, newTenant]);
+      const tenantWithMaintenance = { ...newTenant, maintenance: [] };
+      setTenants([...tenants, tenantWithMaintenance]);
+      
+      // Update dashboard stats
+      updateDashboardStats([...tenants, tenantWithMaintenance]);
       
       setShowNewTenantModal(false);
       setEditingTenant(null);
+      
+      console.log('Tenant added successfully:', newTenant.id);
     } catch (error) {
       console.error('Error adding tenant:', error.message);
-      setError('Failed to add tenant. Please try again.');
+      setError(`Failed to add tenant: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleUpdateTenant = async () => {
+    // Validate required fields
+    if (!editingTenant.name || !editingTenant.email || !editingTenant.room) {
+      setError('Please fill out all required fields (Name, Email, Room)');
+      return;
+    }
+    
     try {
+      setLoading(true);
       setError(null);
       
-      // Update the tenant in Supabase
-      const { error } = await supabase
-        .from('tenants')
-        .update({
+      // Use the service to update the tenant
+      const { data: updatedTenant, error: updateError } = await tenantService.updateTenant(
+        editingTenant.id,
+        {
           name: editingTenant.name,
           email: editingTenant.email,
           room: editingTenant.room,
@@ -169,47 +254,71 @@ const TenantManagementSystem = () => {
           lease_start: editingTenant.lease_start,
           emergency_contact: editingTenant.emergency_contact,
           emergency_phone: editingTenant.emergency_phone
-        })
-        .eq('id', editingTenant.id);
-        
-      if (error) throw error;
+        }
+      );
+      
+      if (updateError) {
+        throw new Error(updateError);
+      }
       
       // Update the tenant in the local state
-      setTenants(tenants.map(tenant => 
+      const updatedTenants = tenants.map(tenant => 
         tenant.id === editingTenant.id ? 
           {...tenant, ...editingTenant, maintenance: tenant.maintenance} : 
           tenant
-      ));
+      );
+      
+      setTenants(updatedTenants);
+      
+      // Update dashboard stats
+      updateDashboardStats(updatedTenants);
       
       setShowEditModal(false);
       setEditingTenant(null);
+      
+      console.log('Tenant updated successfully:', editingTenant.id);
     } catch (error) {
       console.error('Error updating tenant:', error.message);
-      setError('Failed to update tenant. Please try again.');
+      setError(`Failed to update tenant: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleArchiveTenant = async (tenantId) => {
     try {
+      setLoading(true);
       setError(null);
       
-      // Update the tenant status in Supabase
-      const { error } = await supabase
-        .from('tenants')
-        .update({ status: 'previous' })
-        .eq('id', tenantId);
-        
-      if (error) throw error;
+      // Use the service to archive the tenant
+      const { success, error: archiveError } = await tenantService.archiveTenant(tenantId);
+      
+      if (archiveError) {
+        throw new Error(archiveError);
+      }
+      
+      if (!success) {
+        throw new Error('Operation failed without specific error');
+      }
       
       // Update the tenant in the local state
-      setTenants(tenants.map(tenant => 
+      const updatedTenants = tenants.map(tenant => 
         tenant.id === tenantId ? 
           {...tenant, status: 'previous'} : 
           tenant
-      ));
+      );
+      
+      setTenants(updatedTenants);
+      
+      // Update dashboard stats
+      updateDashboardStats(updatedTenants);
+      
+      console.log('Tenant archived successfully:', tenantId);
     } catch (error) {
       console.error('Error archiving tenant:', error.message);
-      setError('Failed to archive tenant. Please try again.');
+      setError(`Failed to archive tenant: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -241,13 +350,13 @@ const TenantManagementSystem = () => {
       subject = subject.replace(/{name}/g, tenant.name);
       message = message
         .replace(/{name}/g, tenant.name)
-        .replace(/{room}/g, tenant.room)
-        .replace(/{rent_due}/g, tenant.rent_due)
-        .replace(/{lease_end}/g, tenant.lease_end);
+        .replace(/{room}/g, tenant.room || '')
+        .replace(/{rent_due}/g, tenant.rent_due || 0)
+        .replace(/{lease_end}/g, tenant.lease_end || 'N/A');
       
       // Handle maintenance specific template
-      if (templateType === 'maintenanceUpdate' && tenant.maintenance.length > 0) {
-        message = message.replace(/{issue}/g, tenant.maintenance[0].issue);
+      if (templateType === 'maintenanceUpdate' && tenant.maintenance && tenant.maintenance.length > 0) {
+        message = message.replace(/{issue}/g, tenant.maintenance[0].issue || 'your request');
       }
     }
     
@@ -263,6 +372,19 @@ const TenantManagementSystem = () => {
     try {
       setEmailStatus('sending');
       setError(null);
+      
+      // Validate email data
+      if (!emailData.subject.trim()) {
+        throw new Error('Email subject is required');
+      }
+      
+      if (!emailData.message.trim()) {
+        throw new Error('Email message is required');
+      }
+      
+      if (emailData.recipients.length === 0) {
+        throw new Error('At least one recipient is required');
+      }
       
       // Send the email using the Netlify function
       const response = await fetch('/.netlify/functions/sendEmail', {
@@ -280,11 +402,12 @@ const TenantManagementSystem = () => {
         }),
       });
       
-      const data = await response.json();
-      
       if (!response.ok) {
-        throw new Error(data.message || 'Failed to send email');
+        const errorData = await response.json();
+        throw new Error(errorData.message || `Server responded with status: ${response.status}`);
       }
+      
+      const data = await response.json();
       
       setEmailStatus('sent');
       // Close the modal after 3 seconds
@@ -295,7 +418,7 @@ const TenantManagementSystem = () => {
     } catch (error) {
       console.error('Error sending email:', error.message);
       setEmailStatus(null);
-      setError('Failed to send email. Please try again.');
+      setError(`Failed to send email: ${error.message}`);
     }
   };
 
@@ -309,19 +432,6 @@ const TenantManagementSystem = () => {
 
   const currentTenants = tenants.filter(tenant => tenant.status === 'current');
   const previousTenants = tenants.filter(tenant => tenant.status === 'previous');
-
-  const getDashboardStats = () => ({
-    totalTenants: currentTenants.length,
-    pendingMaintenance: currentTenants.reduce((acc, tenant) => 
-      acc + tenant.maintenance.filter(m => m.status === 'pending').length, 0),
-    upcomingLeaseEnds: currentTenants.filter(tenant => {
-      const daysUntilLeaseEnd = Math.ceil(
-        (new Date(tenant.lease_end) - new Date()) / (1000 * 60 * 60 * 24)
-      );
-      return daysUntilLeaseEnd <= 30 && daysUntilLeaseEnd > 0;
-    }).length,
-    totalRentDue: currentTenants.reduce((acc, tenant) => acc + (tenant.rent_due || 0), 0)
-  });
 
   return (
     <div className="p-3 sm:p-6 max-w-6xl mx-auto">
@@ -414,7 +524,7 @@ const TenantManagementSystem = () => {
               <Users className="h-6 w-6 text-blue-500" />
               <div>
                 <p className="text-xs sm:text-sm text-gray-500">Current Tenants</p>
-                <p className="text-lg sm:text-2xl font-bold">{getDashboardStats().totalTenants}</p>
+                <p className="text-lg sm:text-2xl font-bold">{dashboardStats.totalTenants}</p>
               </div>
             </div>
           </CardContent>
@@ -426,7 +536,7 @@ const TenantManagementSystem = () => {
               <Wrench className="h-6 w-6 text-yellow-500" />
               <div>
                 <p className="text-xs sm:text-sm text-gray-500">Maintenance</p>
-                <p className="text-lg sm:text-2xl font-bold">{getDashboardStats().pendingMaintenance}</p>
+                <p className="text-lg sm:text-2xl font-bold">{dashboardStats.pendingMaintenance}</p>
               </div>
             </div>
           </CardContent>
@@ -438,7 +548,7 @@ const TenantManagementSystem = () => {
               <Calendar className="h-6 w-6 text-red-500" />
               <div>
                 <p className="text-xs sm:text-sm text-gray-500">Lease Ends</p>
-                <p className="text-lg sm:text-2xl font-bold">{getDashboardStats().upcomingLeaseEnds}</p>
+                <p className="text-lg sm:text-2xl font-bold">{dashboardStats.upcomingLeaseEnds}</p>
               </div>
             </div>
           </CardContent>
@@ -450,7 +560,7 @@ const TenantManagementSystem = () => {
               <DollarSign className="h-6 w-6 text-green-500" />
               <div>
                 <p className="text-xs sm:text-sm text-gray-500">Total Rent</p>
-                <p className="text-lg sm:text-2xl font-bold">${getDashboardStats().totalRentDue}</p>
+                <p className="text-lg sm:text-2xl font-bold">${dashboardStats.totalRentDue}</p>
               </div>
             </div>
           </CardContent>
