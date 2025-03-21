@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Alert, AlertDescription } from './ui/alert';
 import { Mail, Edit, Archive, ChevronDown, ChevronUp } from 'lucide-react';
 
 const TenantCard = ({ 
